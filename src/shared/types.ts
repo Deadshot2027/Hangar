@@ -3,6 +3,18 @@
 export type Status = 'idea' | 'building' | 'live' | 'paused'
 export type PreviewKind = 'web' | 'desktop' | 'console' | 'none'
 export type LaunchKind = 'app' | 'url' | 'cmd' | 'none'
+export type DesktopView = 'interface' | 'window'
+
+export interface AppWindow {
+  id: string
+  name: string
+}
+
+export interface WindowList {
+  /** macOS screen-recording permission ('granted' elsewhere). */
+  permission: 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown'
+  windows: AppWindow[]
+}
 
 /** What lives in <vault>/<id>/hangar.json. Plain JSON, so it can be edited by hand or by Claude. */
 export interface HangarFile {
@@ -14,7 +26,8 @@ export interface HangarFile {
   links: { label: string; url: string }[]
   /** Where the code is: "repo" (inside the project folder) or an absolute path (a linked folder). Null when there is no code yet. */
   code: string | null
-  preview: { command: string; kind: PreviewKind; url?: string }
+  /** `view` is how a desktop app shows in the box: its web interface, or a live picture of its window. */
+  preview: { command: string; kind: PreviewKind; url?: string; view?: DesktopView }
   launch: { kind: LaunchKind; target: string }
   createdAt: string
 }
@@ -209,9 +222,16 @@ export interface HangarApi {
   openPath(path: string): Promise<void>
   openUrl(url: string): Promise<void>
 
-  previewStart(id: string): Promise<PreviewState>
+  previewStart(id: string, view?: DesktopView): Promise<PreviewState>
   previewStop(id: string): Promise<void>
-  previewRestart(id: string): Promise<PreviewState>
+  previewRestart(id: string, view?: DesktopView): Promise<PreviewState>
+  /** Interface: the app's own window is hidden. Window: it is shown (behind Hangar) and mirrored. */
+  previewSetView(id: string, view: DesktopView): Promise<void>
+  /** The windows the running preview has opened, ready to be mirrored. */
+  previewWindows(id: string): Promise<WindowList>
+  /** Move the app's window exactly over this part of Hangar's window and bring it to the front. */
+  previewFocusWindow(id: string, sourceId: string, rect: { x: number; y: number; width: number; height: number }): Promise<ActionResult>
+  openPrivacy(kind: 'screen' | 'accessibility'): Promise<void>
   onPreview(cb: (e: PreviewEvent) => void): () => void
   onProjectsChanged(cb: () => void): () => void
   onNavigate(cb: (target: { projectId?: string; addProject?: boolean }) => void): () => void
@@ -232,7 +252,7 @@ export const INVOKE_METHODS = [
   'gitStatus', 'gitLog', 'branches', 'checkout', 'pull', 'commitPush',
   'createRepo', 'repoInfo', 'renameRepo', 'setVisibility', 'setArchived', 'deleteRepo', 'releases', 'createRelease', 'uploadReleaseAssets', 'publishRelease',
   'openIn', 'launch', 'revealPath', 'openPath', 'openUrl',
-  'previewStart', 'previewStop', 'previewRestart',
+  'previewStart', 'previewStop', 'previewRestart', 'previewSetView', 'previewWindows', 'previewFocusWindow', 'openPrivacy',
   'launcherHide', 'showMain'
 ] as const
 

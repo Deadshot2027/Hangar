@@ -1,7 +1,8 @@
 import { existsSync, watch, type FSWatcher } from 'node:fs'
 import { join, resolve, sep } from 'node:path'
 import { pathToFileURL } from 'node:url'
-import { app, BrowserWindow, dialog, globalShortcut, ipcMain, net, protocol, screen, shell } from 'electron'
+import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, net, protocol, screen, shell, systemPreferences } from 'electron'
+import { dockWindow, windowNumber, windowOwners } from './appwindows'
 import type { HangarApi, InvokeMethod, Settings } from '@shared/types'
 import { discover, defaultRoots } from './discover'
 import { detect } from './detect'
@@ -31,6 +32,43 @@ const sendAll = (channel: string, payload?: unknown) => {
   for (const w of [mainWin, launcherWin]) if (w && !w.isDestroyed()) w.webContents.send(channel, payload)
 }
 const preview = new PreviewManager((e) => sendAll('preview:event', e))
+
+// Windows that were already open when a preview started (to tell its new ones apart where
+// macOS's window owners are not available), and previews whose window has been put behind Hangar.
+const windowsBefore = new Map<string, Set<string>>()
+const tuckedBehind = new Set<string>()
+
+const screenPermission = (): 'granted' | 'denied' | 'not-determined' | 'restricted' | 'unknown' =>
+  isMac ? systemPreferences.getMediaAccessStatus('screen') : 'granted'
+
+async function windowSources() {
+  return desktopCapturer.getSources({ types: ['window'], thumbnailSize: { width: 0, height: 0 }, fetchWindowIcons: false })
+}
+
+async function rememberWindows(id: string) {
+  tuckedBehind.delete(id)
+  if (isMac && screenPermission() !== 'granted') return
+  try {
+    windowsBefore.set(id, new Set((await windowSources()).map((s) => s.id)))
+  } catch {
+    windowsBefore.delete(id)
+  }
+}
+
+/** The windows the preview's processes opened, newest first. */
+async function previewWindows(id: string) {
+  const own = new Set([mainWin, launcherWin].filter((w): w is BrowserWindow => !!w && !w.isDestroyed()).map((w) => windowNumber(w.getMediaSourceId())))
+  let sources = (await windowSources()).filter((s) => !own.has(windowNumber(s.id)))
+  const owners = isMac ? await windowOwners() : null
+  if (owners) {
+    const pids = new Set(await preview.treePids(id))
+    sources = sources.filter((s) => pids.has(owners.get(windowNumber(s.id)) ?? -1))
+  } else {
+    const before = windowsBefore.get(id)
+    sources = before ? sources.filter((s) => !before.has(s.id)) : []
+  }
+  return { sources, owners }
+}
 
 async function remoteOf(id: string) {
   const p = await project(id)
@@ -180,14 +218,49 @@ const handlers: Handlers = {
     if (/^https?:\/\//i.test(url)) await shell.openExternal(url)
   },
 
-  previewStart: async (id) => preview.start(await project(id)),
+  async previewStart(id, view) {
+    const p = await project(id)
+    if (preview.state(id).status === 'idle') await rememberWindows(id)
+    return preview.start(p, view)
+  },
   async previewStop(id) {
     preview.stop(id)
   },
-  async previewRestart(id) {
+  async previewRestart(id, view) {
     preview.stop(id)
     await new Promise((r) => setTimeout(r, 400))
-    return preview.start(await project(id))
+    await rememberWindows(id)
+    return preview.start(await project(id), view)
+  },
+  previewSetView: async (id, view) => preview.setView(id, view),
+  async previewWindows(id) {
+    const permission = screenPermission()
+    try {
+      const { sources } = await previewWindows(id)
+      // The first time the app's window shows up, put Hangar back in front of it.
+      if (sources.length && !tuckedBehind.has(id)) {
+        tuckedBehind.add(id)
+        if (isMac) app.focus({ steal: true })
+        mainWin?.focus()
+      }
+      return { permission, windows: sources.map((s) => ({ id: s.id, name: s.name })) }
+    } catch {
+      return { permission, windows: [] }
+    }
+  },
+  async previewFocusWindow(_id, sourceId, rect) {
+    if (!mainWin) return { ok: false, message: 'Hangar’s window is gone.' }
+    if (!isMac) return { ok: false, message: 'Using an app inside the preview works on macOS. Here it stays a live picture.' }
+    const owners = await windowOwners()
+    const pid = owners?.get(windowNumber(sourceId))
+    if (!pid) return { ok: false, message: 'Could not find which app owns that window.' }
+    const b = mainWin.getContentBounds()
+    const r = await dockWindow(pid, { x: b.x + rect.x, y: b.y + rect.y, width: rect.width, height: rect.height })
+    return { ok: r.ok, message: r.message }
+  },
+  async openPrivacy(kind) {
+    if (!isMac) return
+    await shell.openExternal(`x-apple.systempreferences:com.apple.preference.security?${kind === 'screen' ? 'Privacy_ScreenCapture' : 'Privacy_Accessibility'}`)
   },
 
   async launcherHide() {

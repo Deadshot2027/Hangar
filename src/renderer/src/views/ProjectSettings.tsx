@@ -132,7 +132,7 @@ export function ProjectSettings({ project }: { project: Project }) {
                   label="Shows as"
                   value={project.preview.kind === 'none' ? 'console' : project.preview.kind}
                   onChange={(kind) => save({ preview: { ...project.preview, kind } })}
-                  options={[{ value: 'web', label: 'Web page' }, { value: 'desktop', label: 'App window' }, { value: 'console', label: 'Output' }]}
+                  options={[{ value: 'web', label: 'Web page' }, { value: 'desktop', label: 'Desktop app' }, { value: 'console', label: 'Script' }]}
                 />
                 {project.codePath && <button type="button" className="btn" onClick={detectAgain}>Detect again</button>}
               </div>

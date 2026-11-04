@@ -67,6 +67,20 @@ const isDir = (p: string) => {
   }
 }
 
+/** The address a Tauri app's interface is served on while developing (build.devUrl, or v1's devPath). */
+export function tauriDevUrl(dir: string): string | null {
+  for (const file of [join(dir, 'src-tauri', 'tauri.conf.json'), join(dir, 'tauri.conf.json')]) {
+    try {
+      const conf = JSON.parse(readFileSync(file, 'utf8')) as { build?: { devUrl?: string; devPath?: string } }
+      const url = conf.build?.devUrl || conf.build?.devPath
+      if (url && /^https?:\/\//.test(url)) return url
+    } catch {
+      /* missing or not JSON */
+    }
+  }
+  return null
+}
+
 function detectNode(dir: string, pkg: Pkg, prefix: string): Detection | null {
   const deps = { ...pkg.dependencies, ...pkg.devDependencies }
   const scripts = pkg.scripts || {}
@@ -75,7 +89,7 @@ function detectNode(dir: string, pkg: Pkg, prefix: string): Detection | null {
   const tauri = existsSync(join(dir, 'src-tauri', 'tauri.conf.json')) || '@tauri-apps/cli' in deps || '@tauri-apps/api' in deps
   if (tauri) {
     const command = scripts.tauri ? run('tauri') + ' dev' : scripts.dev ? run('dev') : prefix + 'npx tauri dev'
-    return { label: 'Tauri app', kind: 'desktop', command, url: 'http://localhost:5173', tags: ['desktop', 'tauri'], description }
+    return { label: 'Tauri app', kind: 'desktop', command, url: tauriDevUrl(dir) || 'http://localhost:5173', tags: ['desktop', 'tauri'], description }
   }
   if ('electron' in deps) {
     const command = scripts.dev ? run('dev') : scripts.start ? run('start') : prefix + 'npx electron .'

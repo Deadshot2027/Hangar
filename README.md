@@ -41,7 +41,11 @@ A folder you add from elsewhere on the Mac stays where it is: `hangar.json` reco
 ## What it does
 
 - **Add projects** from GitHub (your repos, or paste any link), from a folder on this Mac (drop it in, choose it, or pick from the ones Hangar finds in `~/Developer`, `~/Projects`, `~/Code` and friends), or start a new one from a template. Hangar detects the type — Vite, Next.js, Tauri, Electron, Swift, Python, Rust, Go, static sites, a `run.sh` — and fills in the preview command.
-- **Preview** starts by itself when you open the tab and stops when you leave it. Web pages show live inside Hangar at desktop, tablet or phone width; games can open 2 or 4 players side by side; desktop apps open their real window; scripts show their output. Missing `node_modules` are installed first.
+- **Preview** starts by itself when you open the tab and stops when you leave it, and everything shows inside the preview box. Web pages show live at desktop, tablet or phone width; games can open 2 or 4 players side by side; scripts show their output. Missing `node_modules` are installed first.
+- **Desktop apps preview inside the box too**, two ways:
+  - **Interface**: the app runs as usual (backends and all), its own window is hidden, and its web interface shows in the box. The default for Tauri apps such as QuantApp.
+  - **Window**: a live view of the app's real window, at its real size. Click it to use the app right there: Hangar moves the window exactly over the box and brings it forward; click anywhere else in Hangar to come back. The default for Electron and native apps.
+  - The first time, macOS asks for two permissions in System Settings → Privacy & Security: **Screen & System Audio Recording** (to show the window) and **Accessibility** (to use it in place). Hiding windows also asks to control System Events.
 - **Launch** opens the real, finished thing: the installed app, the live site, or a command in Terminal.
 - **Open in** Claude Code, VS Code or Cursor, Terminal, Finder or GitHub.
 - **Repository**: browse files, upload by dragging in, delete (two clicks), switch or create branches, pull, and one-line Commit & Push for changes made in your editor or by Claude. Uploads and deletes commit only those files and push for you. Releases: draft, upload builds, publish.
@@ -73,6 +77,6 @@ src/shared/     types shared by both sides
 
 ## Not built yet
 
-- Mirroring a desktop app's window inside the Preview tab (today it opens as its own window, with its output in Hangar).
+- Typing and clicking straight into the live window view without bringing the real window forward.
 - Mirroring an Android phone with `scrcpy`.
 - Screenshots of the preview after each push, as a visual history.

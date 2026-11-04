@@ -26,13 +26,14 @@ describe('detect', () => {
     write(dir, {
       'run.sh': '#!/bin/bash\n',
       'frontend/package.json': JSON.stringify({ scripts: { dev: 'vite' }, devDependencies: { vite: '6', '@tauri-apps/cli': '2' } }),
-      'frontend/src-tauri/tauri.conf.json': '{}',
+      'frontend/src-tauri/tauri.conf.json': JSON.stringify({ build: { devUrl: 'http://localhost:1420', beforeDevCommand: 'npm run dev' } }),
       'README.md': '# Thing\n\nA native macOS app for research.\n'
     })
     const d = detect(dir)
     expect(d.label).toBe('Tauri app')
     expect(d.kind).toBe('desktop')
     expect(d.command).toBe('./run.sh')
+    expect(d.url).toBe('http://localhost:1420')
     expect(d.description).toBe('A native macOS app for research.')
   })
 
@@ -71,5 +72,6 @@ describe('detect', () => {
     const d = detect('/home/user/quantapp')
     expect(d.label).toBe('Tauri app')
     expect(d.command).toBe('./run.sh')
+    expect(d.url).toBe('http://localhost:5173')
   })
 })

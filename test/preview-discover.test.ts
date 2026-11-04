@@ -57,6 +57,32 @@ describe('PreviewManager', () => {
     expect(events.find((e) => e.type === 'status' && e.status === 'exited')).toMatchObject({ exitCode: 3 })
   })
 
+  it('keeps a desktop app’s own windows hidden in interface view, and shows them for window view', async () => {
+    const dir = tempDir()
+    write(dir, { 'app.js': 'setInterval(() => {}, 1000)\n' })
+    const hidden: number[][] = []
+    const shown: number[][] = []
+    const deps = {
+      supported: true,
+      tree: async (pid: number) => [pid, 111, 222],
+      setHidden: async (pids: number[], h: boolean) => {
+        ;(h ? hidden : shown).push(pids)
+        return true
+      }
+    }
+    const pm = new PreviewManager(() => undefined, deps)
+    pm.start(fakeProject(dir, 'node app.js'), 'interface')
+    await expect.poll(() => hidden.length, { timeout: 5000 }).toBeGreaterThan(0)
+    expect(hidden[0]).toEqual([111, 222])
+    await pm.setView('demo', 'window')
+    expect(shown.at(-1)).toEqual([111, 222])
+    const count = hidden.length
+    await new Promise((r) => setTimeout(r, 1800))
+    expect(hidden.length).toBe(count)
+    expect(await pm.treePids('demo')).toContain(111)
+    pm.stop('demo')
+  })
+
   it('refuses to start without a command', () => {
     const pm = new PreviewManager(() => undefined)
     expect(() => pm.start(fakeProject(tempDir(), ''))).toThrow(/preview command/)

@@ -1,6 +1,20 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import type { PreviewEvent, PreviewState, Project } from '@shared/types'
+import type { DesktopView, PreviewEvent, PreviewState, Project } from '@shared/types'
+import { canManageWindows, processTree, setHidden } from './appwindows'
 import { installCommand } from './detect'
+
+/** How the manager finds and hides the app windows a preview opens (swapped out in tests). */
+export interface WindowDeps {
+  supported: boolean
+  tree: (pid: number) => Promise<number[]>
+  setHidden: (pids: number[], hidden: boolean) => Promise<boolean>
+}
+
+const macWindows: WindowDeps = { supported: canManageWindows, tree: processTree, setHidden }
+
+/** Each new process gets this many tries at hiding its windows (they can appear a little after it starts). */
+const HIDE_TRIES = 12
+const HIDE_EVERY_MS = 1500
 
 // The Preview tab runs a project's dev command and streams its output. The UI
 // starts a preview when the tab opens and stops it when the tab closes, so at
@@ -25,20 +39,68 @@ interface Running {
   child: ChildProcess
   state: PreviewState
   stopping: boolean
+  view: DesktopView | null
+  hidden: Set<number>
+  tries: Map<number, number>
+  timer: NodeJS.Timeout | null
 }
 
 export class PreviewManager {
   private procs = new Map<string, Running>()
 
-  constructor(private send: (e: PreviewEvent) => void) {}
+  constructor(
+    private send: (e: PreviewEvent) => void,
+    private win: WindowDeps = macWindows
+  ) {}
+
+  /** Every process this preview is running: the shell, the dev server, the app itself. */
+  async treePids(id: string): Promise<number[]> {
+    const pid = this.procs.get(id)?.child.pid
+    return pid ? this.win.tree(pid) : []
+  }
+
+  /** Interface: keep the app's own windows hidden. Window: show them again so they can be mirrored. */
+  async setView(id: string, view: DesktopView): Promise<void> {
+    const entry = this.procs.get(id)
+    if (!entry) return
+    entry.view = view
+    if (view === 'interface') return this.startHiding(entry)
+    this.stopHiding(entry)
+    if (entry.hidden.size) await this.win.setHidden([...entry.hidden], false)
+    entry.hidden.clear()
+    entry.tries.clear()
+  }
+
+  private startHiding(entry: Running) {
+    if (!this.win.supported || entry.timer) return
+    const tick = async () => {
+      const root = entry.child.pid
+      if (!root || entry.stopping || entry.view !== 'interface') return
+      const pids = (await this.win.tree(root)).filter((p) => p !== root && (entry.tries.get(p) || 0) < HIDE_TRIES)
+      if (!pids.length) return
+      for (const p of pids) entry.tries.set(p, (entry.tries.get(p) || 0) + 1)
+      await this.win.setHidden(pids, true)
+      for (const p of pids) entry.hidden.add(p)
+    }
+    entry.timer = setInterval(() => void tick(), HIDE_EVERY_MS)
+    void tick()
+  }
+
+  private stopHiding(entry: Running) {
+    if (entry.timer) clearInterval(entry.timer)
+    entry.timer = null
+  }
 
   state(id: string): PreviewState {
     return this.procs.get(id)?.state ?? { id, status: 'idle', command: '', url: null, logs: [], exitCode: null, startedAt: null }
   }
 
-  start(project: Project): PreviewState {
+  start(project: Project, view?: DesktopView): PreviewState {
     const existing = this.procs.get(project.id)
-    if (existing && existing.state.status !== 'exited') return existing.state
+    if (existing && existing.state.status !== 'exited') {
+      if (view && view !== existing.view) void this.setView(project.id, view)
+      return existing.state
+    }
     const cwd = project.codePath
     const command = project.preview.command.trim()
     if (!cwd || !project.codeExists) throw new Error('This project has no code folder to run.')
@@ -64,8 +126,9 @@ export class PreviewManager {
       exitCode: null,
       startedAt: new Date().toISOString()
     }
-    const entry: Running = { child, state, stopping: false }
+    const entry: Running = { child, state, stopping: false, view: view ?? null, hidden: new Set(), tries: new Map(), timer: null }
     this.procs.set(project.id, entry)
+    if (entry.view === 'interface') this.startHiding(entry)
     this.send({ id: project.id, type: 'status', status: state.status })
     this.send({ id: project.id, type: 'log', line: state.logs[0] })
 
@@ -80,6 +143,7 @@ export class PreviewManager {
     child.stderr?.on('data', onData)
     child.on('error', (err) => this.line(entry, `Could not start: ${err.message}`, command))
     child.on('exit', (code) => {
+      this.stopHiding(entry)
       if (buffer) this.line(entry, buffer, command)
       entry.state.status = 'exited'
       entry.state.exitCode = code
@@ -117,6 +181,7 @@ export class PreviewManager {
     const entry = this.procs.get(id)
     if (!entry) return
     entry.stopping = true
+    this.stopHiding(entry)
     const pid = entry.child.pid
     const kill = (sig: NodeJS.Signals) => {
       try {

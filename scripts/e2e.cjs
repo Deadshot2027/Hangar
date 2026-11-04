@@ -46,6 +46,26 @@ git(tauri, 'init', '-q', '-b', 'main')
 git(tauri, 'add', '-A')
 git(tauri, 'commit', '-q', '-m', 'Initial commit')
 
+// A desktop app that serves an interface and opens a real (red) window of its own.
+const desk = path.join(root, 'fixture-desk')
+write(desk, {
+  'package.json': JSON.stringify({ description: 'A desktop app that opens a real window.', scripts: { dev: 'node start.js' }, devDependencies: { electron: '36.9.5' } }),
+  'node_modules/.keep': '',
+  'start.js': [
+    "const http = require('http')",
+    "const { spawn } = require('child_process')",
+    "http.createServer((q, r) => { r.setHeader('content-type', 'text/html'); r.end('<body style=\"margin:0;background:#2266ff;color:#fff;font:32px sans-serif\"><h1>Fixture interface</h1></body>') }).listen(4567, () => console.log('  Local:   http://localhost:4567/'))",
+    "spawn(process.env.HANGAR_E2E_ELECTRON, ['--no-sandbox', __dirname + '/window.js'], { stdio: 'inherit' })"
+  ].join('\n'),
+  'window.js': [
+    "const { app, BrowserWindow } = require('electron')",
+    "app.whenReady().then(() => {",
+    "  const w = new BrowserWindow({ width: 520, height: 380, title: 'Fixture Desk', backgroundColor: '#ff3366' })",
+    "  w.loadURL('data:text/html,<title>Fixture Desk</title><body style=\"margin:0;background:%23ff3366;color:white;font:36px sans-serif\"><h1>Real window</h1></body>')",
+    "})"
+  ].join('\n')
+})
+
 // A site whose "GitHub" remote is really a local bare repo (url.insteadOf), so pushes can be checked.
 const bare = path.join(root, 'remote.git')
 const site = path.join(root, 'shop-site')
@@ -70,10 +90,22 @@ const check = (name, ok, detail = '') => results.push(`${ok ? 'PASS' : 'FAIL'}  
 const wait = (ms) => new Promise((r) => setTimeout(r, ms))
 
 ;(async () => {
+  // App windows can only be listed under a window manager; start one on a bare Linux display.
+  let wm = null
+  if (process.platform === 'linux') {
+    try {
+      execFileSync('which', ['openbox'], { stdio: 'ignore' })
+      wm = require('child_process').spawn('openbox', [], { stdio: 'ignore' })
+      await wait(800)
+    } catch {
+      /* no window manager: the window check will report it */
+    }
+  }
+  const electronBin = require(path.join(APP, 'node_modules', 'electron'))
   const app = await _electron.launch({
-    executablePath: require(path.join(APP, 'node_modules', 'electron')),
+    executablePath: electronBin,
     args: ['--no-sandbox', APP],
-    env: { ...process.env, ...ident, HANGAR_VAULT: vault, HANGAR_USER_DATA: path.join(root, 'userdata'), NODE_OPTIONS: '', SHELL: '/bin/sh', PATH: `${fakebin}:${process.env.PATH}` }
+    env: { ...process.env, ...ident, HANGAR_VAULT: vault, HANGAR_USER_DATA: path.join(root, 'userdata'), NODE_OPTIONS: '', SHELL: '/bin/sh', PATH: `${fakebin}:${process.env.PATH}`, HANGAR_E2E_ELECTRON: electronBin }
   })
   await app.firstWindow()
   const isMain = (w) => w.url().endsWith('/index.html')
@@ -137,26 +169,59 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   const down = await app.evaluate(async () => fetch('http://localhost:3000/').then(() => 'still up', () => 'stopped'))
   check('leaving Preview stops the server', down === 'stopped', down)
 
+  // A desktop app: its real window shows live inside the box, and so does its interface.
+  await addByPath(desk)
+  await win.click('.tabs button:has-text("Preview")')
+  try {
+    await win.waitForFunction(() => (document.querySelector('video')?.videoWidth || 0) > 0, null, { timeout: 30_000 })
+    await wait(1200)
+    const px = await win.evaluate(() => {
+      const v = document.querySelector('video')
+      const c = document.createElement('canvas')
+      c.width = v.videoWidth
+      c.height = v.videoHeight
+      const g = c.getContext('2d')
+      g.drawImage(v, 0, 0)
+      return [c.width, c.height, ...Array.from(g.getImageData(Math.floor(c.width / 2), Math.floor(c.height * 0.85), 1, 1).data)]
+    })
+    check('desktop app window shows live in the box', px[2] > 200 && px[3] < 110 && px[4] > 60 && px[4] < 160, `${px[0]}x${px[1]} rgb(${px.slice(2, 5).join(',')})`)
+  } catch (e) {
+    check('desktop app window shows live in the box', false, e.message.split('\n')[0])
+  }
+  await shot('06-preview-desktop-window')
+  await win.click('.frame-bar .seg button:has-text("Interface")')
+  await win.waitForSelector('webview', { timeout: 30_000 })
+  await wait(2000)
+  await shot('07-preview-desktop-interface')
+  check('desktop app interface shows in the box', ((await win.getAttribute('webview', 'src')) || '').includes('4567'))
+  await win.click('.tabs button:has-text("Overview")')
+  await wait(2500)
+  const windowsLeft = await app.evaluate(({ desktopCapturer }) => desktopCapturer.getSources({ types: ['window'] }).then((s) => s.map((x) => x.name)))
+  check('leaving Preview closes the desktop app', !windowsLeft.includes('Fixture Desk'), windowsLeft.join(', '))
+  await win.click('.side button:has-text("Arena IO")')
+  await win.click('.tabs button:has-text("Notes")')
+
   await win.fill('textarea.notes-editor', '# Arena IO\n\nA multiplayer .io game. Shares ideas with [[Shop Site]].\n\n## Next\n\n- [x] Movement\n- [ ] Rooms\n- [ ] Leaderboard\n')
   await wait(900)
   await win.click('.seg button:has-text("Read")')
   await win.click('.notes-body input[type="checkbox"] >> nth=1')
   await wait(900)
-  await shot('06-notes')
+  await shot('08-notes')
   check('notes saved and task ticked', fs.readFileSync(path.join(vault, 'arena-io', 'notes.md'), 'utf8').includes('- [x] Rooms'))
 
   await win.click('.side button:has-text("All projects")')
   await wait(800)
-  await shot('07-home')
-  check('home lists 3 projects', (await win.$$('.list .list-row')).length === 3)
+  await shot('09-home')
+  check('home lists 4 projects', (await win.$$('.list .list-row')).length === 4)
   check('GitHub shown as not signed in', await win.isVisible('text=GitHub CLI not signed in'))
   await win.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k')
   await win.waitForSelector('.palette')
   await win.keyboard.type('are')
-  await shot('08-palette')
+  await shot('10-palette')
 
   check('no renderer errors', errors.length === 0, errors.slice(0, 3).join(' | '))
   await app.close()
+  wm?.kill()
   console.log(results.join('\n'))
   console.log(`Screenshots: ${OUT}`)
   process.exit(results.some((r) => r.startsWith('FAIL')) ? 1 : 0)
