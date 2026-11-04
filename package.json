@@ -1,0 +1,45 @@
+{
+  "name": "hangar",
+  "productName": "Hangar",
+  "version": "0.1.0",
+  "description": "A home for every coding project: notes, files, previews and GitHub repo management in one place.",
+  "private": true,
+  "main": "./out/main/index.js",
+  "scripts": {
+    "dev": "electron-vite dev",
+    "build": "electron-vite build",
+    "start": "electron-vite preview",
+    "typecheck": "tsc --noEmit -p tsconfig.node.json && tsc --noEmit -p tsconfig.web.json",
+    "test": "vitest run",
+    "e2e": "electron-vite build && node scripts/e2e.cjs",
+    "dist": "electron-vite build && electron-builder --mac"
+  },
+  "dependencies": {
+    "dompurify": "3.2.6",
+    "lucide-react": "0.511.0",
+    "marked": "15.0.12",
+    "react": "19.1.0",
+    "react-dom": "19.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.30",
+    "@types/react": "19.1.8",
+    "@types/react-dom": "19.1.6",
+    "@vitejs/plugin-react": "4.5.2",
+    "electron": "36.9.5",
+    "electron-builder": "26.0.12",
+    "electron-vite": "3.1.0",
+    "typescript": "5.8.3",
+    "vite": "6.3.5",
+    "vitest": "3.2.4"
+  },
+  "build": {
+    "appId": "app.hangar.desktop",
+    "productName": "Hangar",
+    "files": ["out/**/*"],
+    "mac": {
+      "category": "public.app-category.developer-tools",
+      "target": ["dmg"]
+    }
+  }
+}
