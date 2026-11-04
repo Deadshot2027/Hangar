@@ -122,9 +122,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
     }
   }
   const electronBin = require(path.join(APP, 'node_modules', 'electron'))
+  // HANGAR_E2E_APP: run a packaged build (dist/…) instead of the source folder.
+  const packaged = process.env.HANGAR_E2E_APP
   const app = await _electron.launch({
-    executablePath: electronBin,
-    args: ['--no-sandbox', APP],
+    executablePath: packaged || electronBin,
+    args: packaged ? ['--no-sandbox'] : ['--no-sandbox', APP],
     env: { ...process.env, ...ident, HANGAR_VAULT: vault, HANGAR_USER_DATA: path.join(root, 'userdata'), NODE_OPTIONS: '', SHELL: '/bin/sh', PATH: `${fakebin}:${process.env.PATH}`, HANGAR_E2E_ELECTRON: electronBin }
   })
   await app.firstWindow()

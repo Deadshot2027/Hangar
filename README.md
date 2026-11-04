@@ -19,7 +19,15 @@ npm install
 npm run dev
 ```
 
-`npm run dist` builds `Hangar.dmg` in `dist/`.
+To install it as a normal Mac app:
+
+```bash
+npm run app
+```
+
+That builds Hangar for this Mac, puts it in Applications (quitting and replacing the copy already there), and opens it. Run it again after a `git pull` to update. The installed app and `npm run dev` share their settings and projects, so only one of them runs at a time.
+
+The app is signed locally ("ad hoc"), not with an Apple Developer ID, so it is for this Mac: macOS may ask again for Screen Recording and Accessibility after each reinstall. `npm run dist` builds a `Hangar.dmg` in `dist/` the same way.
 
 If Electron's download was skipped during install (for example with `ignore-scripts`, pnpm or bun), `npm run dev` fetches it on the first run. To fetch it by hand: `node node_modules/electron/install.js`.
 
