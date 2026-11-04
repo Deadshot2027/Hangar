@@ -2,7 +2,11 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Plus, Search } from 'lucide-react'
 import type { OpenTarget, Project } from '@shared/types'
 import { api, errMsg } from '../api'
+import { Logo } from '../components/brand'
+import { usePop } from '../components/liquid'
 import { STATUS_LABEL } from '../components/ui'
+import { useGlide } from '../motion'
+import { MenuItems } from './Shell'
 import { useApp } from '../state'
 import { cx } from '../util'
 
@@ -42,6 +46,7 @@ export function LauncherCore({ projects, inApp, editor, onClose, onOpenPage, onA
   const [note, setNote] = useState<{ text: string; ok: boolean } | null>(null)
   const input = useRef<HTMLInputElement>(null)
   const list = useRef<HTMLDivElement>(null)
+  useGlide(list, { selector: '.launcher-row.on', axis: 'y' })
 
   useEffect(() => {
     setQ('')
@@ -136,6 +141,7 @@ export function LauncherCore({ projects, inApp, editor, onClose, onOpenPage, onA
         <span className="chip">↑↓ move · ↵ {inApp ? 'open' : 'Claude Code'}</span>
       </div>
       <div className="launcher-list" ref={list} role="listbox" aria-label="Projects">
+        <span className="glide" aria-hidden="true" />
         {items.length === 0 && <p className="muted" style={{ textAlign: 'center', padding: '60px 20px' }}>No projects match “{q}”.</p>}
         {items.some((i) => i.kind === 'project') && <div className="subhead" style={{ padding: '8px 10px 4px', margin: 0 }}>Projects</div>}
         {items.map((it, i) => {
@@ -164,7 +170,7 @@ export function LauncherCore({ projects, inApp, editor, onClose, onOpenPage, onA
         })}
       </div>
       <div className="launcher-foot">
-        <span className="brand-mark" style={{ width: 16, height: 16, fontSize: 9, borderRadius: 4 }} aria-hidden="true">H</span>
+        <Logo size={18} />
         <span className="grow ellipsis" style={{ fontSize: 12, color: note && !note.ok ? 'var(--danger)' : 'var(--tx2)' }} role="status">
           {note?.text || (selProject ? selProject.codePath || selProject.home : 'Type to search')}
         </span>
@@ -178,12 +184,14 @@ export function LauncherCore({ projects, inApp, editor, onClose, onOpenPage, onA
       {actionsOpen && (
         <div className="launcher-actions" role="menu">
           <div className="menu-label">{selProject?.name || 'Commands'}</div>
-          {actions.map((a) => (
-            <button key={a.id + a.label} type="button" role="menuitem" className="menu-item" onClick={() => run(a.id)}>
-              <span className="grow">{a.label}</span>
-              {a.keys && <span className="kbd">{a.keys}</span>}
-            </button>
-          ))}
+          <MenuItems>
+            {actions.map((a) => (
+              <button key={a.id + a.label} type="button" role="menuitem" className="menu-item" onClick={() => run(a.id)}>
+                <span className="grow">{a.label}</span>
+                {a.keys && <span className="kbd">{a.keys}</span>}
+              </button>
+            ))}
+          </MenuItems>
         </div>
       )}
     </div>
@@ -193,17 +201,20 @@ export function LauncherCore({ projects, inApp, editor, onClose, onOpenPage, onA
 /** ⌘K inside the main window. */
 export function Palette({ onClose }: { onClose: () => void }) {
   const { projects, go, openAdd, settings } = useApp()
+  const panel = useRef<HTMLDivElement>(null)
+  const scrim = useRef<HTMLDivElement>(null)
+  const close = usePop(panel, scrim, onClose)
   return (
-    <div className="scrim" style={{ paddingTop: 110 }} onMouseDown={(e) => e.target === e.currentTarget && onClose()}>
-      <div className="palette">
+    <div className="scrim" ref={scrim} style={{ paddingTop: 110 }} onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="palette" ref={panel}>
         <LauncherCore
           projects={projects}
           inApp
           editor={settings.editor}
-          onClose={onClose}
+          onClose={close}
           onOpenPage={(id) => {
             go({ kind: 'project', id, tab: 'overview' })
-            onClose()
+            close()
           }}
           onAddProject={() => {
             onClose()

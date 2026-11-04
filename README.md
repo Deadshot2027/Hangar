@@ -42,6 +42,7 @@ A folder you add from elsewhere on the Mac stays where it is: `hangar.json` reco
 
 - **Add projects** from GitHub (your repos, or paste any link), from a folder on this Mac (drop it in, choose it, or pick from the ones Hangar finds in `~/Developer`, `~/Projects`, `~/Code` and friends), or start a new one from a template. Hangar detects the type — Vite, Next.js, Tauri, Electron, Swift, Python, Rust, Go, static sites, a `run.sh` — and fills in the preview command.
 - **Preview** starts by itself when you open the tab and stops when you leave it, and everything shows inside the preview box. Web pages show live at desktop, tablet or phone width; games can open 2 or 4 players side by side; scripts show their output. Missing `node_modules` are installed first.
+- **A loading screen** covers the box until the project is really up: the page has loaded *and* its backend answers. It lists what is happening (the stages a `run.sh` announces with `=== … ===`, packages, compiling, the dev server, the app starting, the backend, the page), shows the latest line of output, and times the start against the last one. Hangar finds the backend in the code (QuantApp's `http://127.0.0.1:8000`); change it, or turn waiting off, under Settings → Wait for. **Show it now** skips the wait.
 - **Desktop apps preview inside the box too**, two ways:
   - **Interface**: the app runs as usual (backends and all), its own window is hidden, and its web interface shows in the box. The default for Tauri apps such as QuantApp.
   - **Window**: a live view of the app's real window, at its real size. Click it to use the app right there: Hangar moves the window exactly over the box and brings it forward; click anywhere else in Hangar to come back. The default for Electron and native apps.
@@ -53,6 +54,12 @@ A folder you add from elsewhere on the Mac stays where it is: `hangar.json` reco
 - **Notes** in Markdown with `[[Project]]` links and tickable checkboxes, saved as you type.
 - **Assets**: designs, videos and 3D models next to the code, out of git.
 - **⌥Space** opens the launcher from anywhere; **⌘K** searches inside the app.
+
+## The look
+
+Black and white by default (violet in Settings), on glass. Motion follows QuantApp's trail Map: selections glide on springs and stretch like a drop on the way, menus grow out of the button that opened them, notices bud out of a bead in the corner and melt back into it, dialogs spring up out of a frosted scrim, and Launch melts into dots while it works. With Reduce Motion on, everything is simply there.
+
+The mark is a hangar with one bead parked inside: the project. The same bead is the loader, the toast and the gliding selection. The icon's source is `resources/icon.svg` (rendered to `build/icon.png` for the app bundle).
 
 Keyboard: ⌘K search · ⌘1 all projects · ⌘N add project · ⌘L launch this project · in the launcher, ↵ Claude Code, ⌘↵ editor, ⌘L launch, ⌘K actions.
 

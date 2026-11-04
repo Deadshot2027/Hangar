@@ -1,7 +1,9 @@
 import { spawn, type ChildProcess } from 'node:child_process'
-import type { DesktopView, PreviewEvent, PreviewState, Project } from '@shared/types'
+import { request as httpRequest } from 'node:http'
+import { request as httpsRequest } from 'node:https'
+import type { DesktopView, PreviewEvent, PreviewProgress, PreviewState, Project } from '@shared/types'
 import { canManageWindows, processTree, setHidden } from './appwindows'
-import { installCommand } from './detect'
+import { detectBackends, installCommand } from './detect'
 
 /** How the manager finds and hides the app windows a preview opens (swapped out in tests). */
 export interface WindowDeps {
@@ -11,6 +13,96 @@ export interface WindowDeps {
 }
 
 const macWindows: WindowDeps = { supported: canManageWindows, tree: processTree, setHidden }
+
+/** Does anything answer at this address? Any reply below 500 counts: a backend with no page at / still answers 404. */
+export function probe(url: string, timeoutMs = 1500): Promise<boolean> {
+  return new Promise((resolve) => {
+    let done = false
+    const finish = (ok: boolean) => {
+      if (done) return
+      done = true
+      resolve(ok)
+    }
+    try {
+      const req = (url.startsWith('https:') ? httpsRequest : httpRequest)(url, { method: 'GET', timeout: timeoutMs, rejectUnauthorized: false }, (res) => {
+        res.resume()
+        finish((res.statusCode || 0) < 500)
+      })
+      req.on('timeout', () => {
+        req.destroy()
+        finish(false)
+      })
+      req.on('error', () => finish(false))
+      req.end()
+    } catch {
+      finish(false)
+    }
+  })
+}
+
+/** How the manager asks addresses and finds backends (swapped out in tests). */
+export interface ReadyDeps {
+  probe: (url: string) => Promise<boolean>
+  backends: (dir: string, pageUrl: string | null) => string[]
+  everyMs: number
+}
+const realReady: ReadyDeps = { probe, backends: detectBackends, everyMs: 700 }
+
+const origin = (u: string | null) => {
+  try {
+    return u ? new URL(u).origin.replace('127.0.0.1', 'localhost') : ''
+  } catch {
+    return ''
+  }
+}
+
+export function emptyProgress(): PreviewProgress {
+  return { install: false, stages: [], building: false, compiled: 0, compiledTotal: null, appStarted: false, pageUp: false, backends: [] }
+}
+
+const BANNER = /^\s*(?:={3,}|#{3,}|\*{3,}|==>)\s*(.*?[A-Za-z].*?)\s*(?:={3,}|#{3,}|\*{3,})?\s*$/
+const CARGO_COMPILING = /^\s*Compiling [\w.-]+ v\d/
+const CARGO_FINISHED = /^\s*Finished\b.*\b(?:target|profile)\b/
+const APP_RUNNING = /^\s*Running `[^`]*target[\\/]|start electron app|^\s*Launching\b.*\.app\b/i
+const STEP_COUNT = /^\s*\[(\d+)\/(\d+)\]\s+(?:Compiling|Linking|Build|Write|Emitting|Generating|Copying)/
+const BUILD_DONE = /^\s*(?:Build complete!|\*\* BUILD SUCCEEDED \*\*)/
+
+/** Read one line of output into the progress. Pure; true when something changed. */
+export function readProgress(p: PreviewProgress, line: string): boolean {
+  const banner = line.match(BANNER)
+  if (banner && banner[1].length <= 160) {
+    const text = banner[1].replace(/\s*=+$/, '').trim()
+    if (text && p.stages.at(-1) !== text) {
+      p.stages.push(text)
+      if (p.stages.length > 12) p.stages.splice(0, p.stages.length - 12)
+      return true
+    }
+    return false
+  }
+  if (CARGO_COMPILING.test(line)) {
+    p.building = true
+    p.compiled++
+    return true
+  }
+  const step = line.match(STEP_COUNT)
+  if (step) {
+    p.building = true
+    p.compiled = Number(step[1])
+    p.compiledTotal = Number(step[2])
+    return true
+  }
+  if (CARGO_FINISHED.test(line) || BUILD_DONE.test(line)) {
+    const changed = p.building
+    p.building = false
+    return changed
+  }
+  if (APP_RUNNING.test(line) && !p.appStarted) {
+    p.appStarted = true
+    p.building = false
+    return true
+  }
+  return false
+}
 
 /** Each new process gets this many tries at hiding its windows (they can appear a little after it starts). */
 const HIDE_TRIES = 12
@@ -43,6 +135,9 @@ interface Running {
   hidden: Set<number>
   tries: Map<number, number>
   timer: NodeJS.Timeout | null
+  /** The address the preview shows (from the output, else the project's setting). */
+  pageUrl: string | null
+  readyTimer: NodeJS.Timeout | null
 }
 
 export class PreviewManager {
@@ -50,8 +145,46 @@ export class PreviewManager {
 
   constructor(
     private send: (e: PreviewEvent) => void,
-    private win: WindowDeps = macWindows
+    private win: WindowDeps = macWindows,
+    private ready: ReadyDeps = realReady
   ) {}
+
+  private sendProgress(entry: Running) {
+    this.send({ id: entry.state.id, type: 'progress', progress: { ...entry.state.progress, stages: [...entry.state.progress.stages], backends: entry.state.progress.backends.map((b) => ({ ...b })) } })
+  }
+
+  /** Keep asking the page and each backend until they answer. */
+  private startAsking(entry: Running) {
+    let busy = false
+    const tick = async () => {
+      if (busy || entry.stopping) return
+      busy = true
+      try {
+        const p = entry.state.progress
+        const url = entry.state.url || entry.pageUrl
+        let changed = false
+        const checks: Promise<void>[] = []
+        if (url && !p.pageUp) checks.push(this.ready.probe(url).then((ok) => void (ok && !p.pageUp && ((p.pageUp = true), (changed = true)))))
+        for (const b of p.backends) if (!b.up) checks.push(this.ready.probe(b.url).then((ok) => void (ok && !b.up && ((b.up = true), (changed = true)))))
+        await Promise.all(checks)
+        if (entry.stopping) return
+        if (changed) this.sendProgress(entry)
+        if ((p.pageUp || !url) && p.backends.every((b) => b.up) && entry.readyTimer) {
+          clearInterval(entry.readyTimer)
+          entry.readyTimer = null
+        }
+      } finally {
+        busy = false
+      }
+    }
+    entry.readyTimer = setInterval(() => void tick(), this.ready.everyMs)
+    void tick()
+  }
+
+  private stopAsking(entry: Running) {
+    if (entry.readyTimer) clearInterval(entry.readyTimer)
+    entry.readyTimer = null
+  }
 
   /** Every process this preview is running: the shell, the dev server, the app itself. */
   async treePids(id: string): Promise<number[]> {
@@ -92,7 +225,7 @@ export class PreviewManager {
   }
 
   state(id: string): PreviewState {
-    return this.procs.get(id)?.state ?? { id, status: 'idle', command: '', url: null, logs: [], exitCode: null, startedAt: null }
+    return this.procs.get(id)?.state ?? { id, status: 'idle', command: '', url: null, logs: [], exitCode: null, startedAt: null, progress: emptyProgress() }
   }
 
   start(project: Project, view?: DesktopView): PreviewState {
@@ -117,6 +250,16 @@ export class PreviewManager {
       env: { ...process.env, BROWSER: 'none', FORCE_COLOR: '0', NO_COLOR: '1', PYTHONUNBUFFERED: '1' }
     })
 
+    const pageUrl = project.preview.kind === 'console' ? null : project.preview.url || null
+    const progress = emptyProgress()
+    progress.install = !!install
+    let backends: string[] = []
+    try {
+      backends = project.preview.waitFor ?? (project.preview.kind === 'console' ? [] : this.ready.backends(cwd, pageUrl))
+    } catch {
+      /* unreadable code folder: wait for nothing */
+    }
+    progress.backends = backends.filter(Boolean).map((url) => ({ url, up: false, auto: !project.preview.waitFor }))
     const state: PreviewState = {
       id: project.id,
       status: install ? 'installing' : 'starting',
@@ -124,11 +267,13 @@ export class PreviewManager {
       url: null,
       logs: [`$ ${full}`],
       exitCode: null,
-      startedAt: new Date().toISOString()
+      startedAt: new Date().toISOString(),
+      progress
     }
-    const entry: Running = { child, state, stopping: false, view: view ?? null, hidden: new Set(), tries: new Map(), timer: null }
+    const entry: Running = { child, state, stopping: false, view: view ?? null, hidden: new Set(), tries: new Map(), timer: null, pageUrl, readyTimer: null }
     this.procs.set(project.id, entry)
     if (entry.view === 'interface') this.startHiding(entry)
+    if (pageUrl || progress.backends.length) this.startAsking(entry)
     this.send({ id: project.id, type: 'status', status: state.status })
     this.send({ id: project.id, type: 'log', line: state.logs[0] })
 
@@ -144,22 +289,27 @@ export class PreviewManager {
     child.on('error', (err) => this.line(entry, `Could not start: ${err.message}`, command))
     child.on('exit', (code) => {
       this.stopHiding(entry)
+      this.stopAsking(entry)
       if (buffer) this.line(entry, buffer, command)
       entry.state.status = 'exited'
       entry.state.exitCode = code
       if (!entry.stopping) this.send({ id: project.id, type: 'status', status: 'exited', exitCode: code })
-      this.procs.delete(project.id)
+      // A restart may already have put a new run under this id: only clear our own.
+      if (this.procs.get(project.id) === entry) this.procs.delete(project.id)
     })
     return state
   }
 
   private line(entry: Running, raw: string, command: string) {
+    // What a stopped run prints on its way out is not news.
+    if (entry.stopping) return
     const line = stripAnsi(raw).trimEnd()
     if (!line) return
     const { state } = entry
     state.logs.push(line)
     if (state.logs.length > MAX_LOGS) state.logs.splice(0, state.logs.length - MAX_LOGS)
     this.send({ id: state.id, type: 'log', line })
+    if (readProgress(state.progress, line)) this.sendProgress(entry)
     if (state.status === 'installing' && (/^(added|removed|changed) \d+ packages?|up to date|Done in|Lockfile is up to date|Packages: \+\d+/i.test(line) || line.includes(command))) {
       state.status = 'starting'
       this.send({ id: state.id, type: 'status', status: 'starting' })
@@ -167,6 +317,12 @@ export class PreviewManager {
     const url = state.url ? null : findLocalUrl(line)
     if (url) {
       state.url = url
+      // The page is somewhere other than the setting said (a busy port moved it): ask there instead.
+      if (state.progress.pageUp && origin(url) !== origin(entry.pageUrl)) {
+        state.progress.pageUp = false
+        this.sendProgress(entry)
+      }
+      if (!entry.readyTimer && !state.progress.pageUp) this.startAsking(entry)
       state.status = 'running'
       this.send({ id: state.id, type: 'url', url })
       this.send({ id: state.id, type: 'status', status: 'running' })
@@ -179,9 +335,14 @@ export class PreviewManager {
   /** Stop the dev server and everything it started (vite, electron, tauri...). */
   stop(id: string): void {
     const entry = this.procs.get(id)
-    if (!entry) return
+    if (!entry) {
+      // Nothing running, but say so: the UI may still think it is.
+      this.send({ id, type: 'status', status: 'idle' })
+      return
+    }
     entry.stopping = true
     this.stopHiding(entry)
+    this.stopAsking(entry)
     const pid = entry.child.pid
     const kill = (sig: NodeJS.Signals) => {
       try {

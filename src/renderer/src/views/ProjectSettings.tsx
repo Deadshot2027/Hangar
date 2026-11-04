@@ -22,6 +22,57 @@ function Field({ value, onSave, ...rest }: { value: string; onSave: (v: string) 
   )
 }
 
+/** The backends the preview waits for: found in the code unless you list them (or turn waiting off). */
+function WaitFor({ project, save }: { project: Project; save: (patch: Parameters<typeof api.updateProject>[1], message?: string) => Promise<void> }) {
+  const [found, setFound] = useState<string[] | null>(null)
+  const set = project.preview.waitFor
+  useEffect(() => {
+    let alive = true
+    api.detectBackends(project.id).then((b) => alive && setFound(b), () => alive && setFound([]))
+    return () => {
+      alive = false
+    }
+  }, [project.id, project.codePath])
+  const auto = found?.length ? found.join(', ') : 'nothing found in the code'
+  return (
+    <div className="settings-row">
+      <div className="label">
+        <b>Wait for</b>
+        <span>The preview stays on its loading screen until these answer, so a page never shows before its backend is up.</span>
+      </div>
+      <div className="control">
+        {set && set.length === 0 ? (
+          <p className="muted" style={{ margin: 0, fontSize: 12 }}>
+            Shows as soon as the page loads.{' '}
+            <button type="button" className="link" onClick={() => save({ preview: { ...project.preview, waitFor: undefined } })}>
+              Wait for backends again
+            </button>
+          </p>
+        ) : (
+          <>
+            <Field
+              className="input mono"
+              aria-label="Backends to wait for"
+              value={(set || []).join(', ')}
+              placeholder={found === null ? 'Looking in the code…' : `Found: ${auto}`}
+              onSave={(v) => {
+                const list = v.split(/[\s,]+/).map((x) => x.trim()).filter(Boolean)
+                return save({ preview: { ...project.preview, waitFor: list.length ? list : undefined } })
+              }}
+            />
+            <div className="row wrap" style={{ gap: 12 }}>
+              <span className="muted" style={{ fontSize: 12 }}>{set ? 'Leave empty to use what Hangar finds in the code.' : 'Type addresses to wait for something else.'}</span>
+              <button type="button" className="text-btn" onClick={() => save({ preview: { ...project.preview, waitFor: [] } })}>
+                Don’t wait
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
 export function ProjectSettings({ project }: { project: Project }) {
   const { refresh, go, home } = useApp()
   const toast = useToast()
@@ -138,6 +189,7 @@ export function ProjectSettings({ project }: { project: Project }) {
               </div>
             </div>
           </div>
+          {project.preview.kind !== 'console' && <WaitFor project={project} save={save} />}
         </div>
       </section>
 

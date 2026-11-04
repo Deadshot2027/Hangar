@@ -168,3 +168,57 @@ export function looksLikeProject(dir: string): boolean {
   const markers = ['.git', 'package.json', 'Cargo.toml', 'go.mod', 'pyproject.toml', 'requirements.txt', 'Package.swift', 'project.godot', 'index.html', 'run.sh']
   return names.some((n) => markers.includes(n) || n.endsWith('.xcodeproj'))
 }
+
+const SOURCE_EXT = /\.(?:[cm]?[jt]sx?|vue|svelte)$/
+const SKIP_DIR = /^(?:node_modules|dist|build|out|target|coverage|\.[^.]+|__tests__|tests?|verify|e2e|fixtures?|mocks?|stories)$/i
+const SKIP_FILE = /(?:\.|-|_)(?:test|spec|stories|mock)\./i
+const LOCAL_ORIGIN = /\bhttps?:\/\/(?:127\.0\.0\.1|localhost|0\.0\.0\.0):(\d{2,5})(?![\d])/g
+
+/**
+ * The backends a project's interface talks to while developing, read from its
+ * code: a local address written in its source (QuantApp's
+ * DEV_API_BASE = 'http://127.0.0.1:8000'), other than the page's own. The
+ * preview waits for these to answer before it shows. Most-used first, at most two.
+ */
+export function detectBackends(dir: string, pageUrl?: string | null): string[] {
+  const pagePort = pageUrl ? (pageUrl.match(/:(\d{2,5})(?:\/|$)/)?.[1] ?? null) : null
+  const roots = ['src', 'frontend/src', 'app/src', 'web/src', 'client/src', 'ui/src', 'renderer/src', 'src/renderer'].map((r) => join(dir, r)).filter(isDir)
+  const counts = new Map<string, number>()
+  let files = 0
+  let bytes = 0
+  const walk = (d: string, depth: number) => {
+    if (depth > 6 || files > 800 || bytes > 4_000_000) return
+    for (const name of listNames(d)) {
+      const p = join(d, name)
+      if (isDir(p)) {
+        if (!SKIP_DIR.test(name)) walk(p, depth + 1)
+        continue
+      }
+      if (!SOURCE_EXT.test(name) || SKIP_FILE.test(name)) continue
+      let text = ''
+      try {
+        if (statSync(p).size > 300_000) continue
+        text = readFileSync(p, 'utf8')
+      } catch {
+        continue
+      }
+      files++
+      bytes += text.length
+      for (const m of text.matchAll(LOCAL_ORIGIN)) {
+        const port = m[1]
+        if (port === pagePort || Number(port) < 80) continue
+        const origin = m[0].replace('0.0.0.0', '127.0.0.1')
+        counts.set(origin, (counts.get(origin) || 0) + 1)
+      }
+    }
+  }
+  for (const r of new Set(roots)) walk(r, 0)
+  // One address per port: the spelling the code uses most.
+  const byPort = new Map<string, [string, number]>()
+  for (const [origin, n] of counts) {
+    const port = origin.split(':').pop() as string
+    const cur = byPort.get(port)
+    byPort.set(port, cur && cur[1] >= n ? [cur[0], cur[1] + n] : [origin, (cur?.[1] || 0) + n])
+  }
+  return [...byPort.values()].sort((a, b) => b[1] - a[1]).slice(0, 2).map(([o]) => o)
+}

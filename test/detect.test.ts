@@ -75,3 +75,19 @@ describe('detect', () => {
     expect(d.url).toBe('http://localhost:5173')
   })
 })
+
+describe('backend detection', () => {
+  it('finds the local backend address an interface talks to, not its own page', async () => {
+    const { detectBackends } = await import('../src/main/detect')
+    const dir = tempDir()
+    write(dir, {
+      'frontend/src/api.js': "export const DEV_API_BASE = 'http://127.0.0.1:8000'\nfetch('http://127.0.0.1:8000/health')\n",
+      'frontend/src/other.ts': "const page = 'http://localhost:5173/'\nconst ws = 'ws://x'\n",
+      'frontend/src/api.test.js': "fetch('http://localhost:9999')\n",
+      'frontend/src/verify/check.js': "fetch('http://localhost:9998')\n",
+      'frontend/node_modules/x/index.js': "fetch('http://localhost:9997')\n"
+    })
+    expect(detectBackends(dir, 'http://localhost:5173')).toEqual(['http://127.0.0.1:8000'])
+    expect(detectBackends(tempDir(), null)).toEqual([])
+  })
+})

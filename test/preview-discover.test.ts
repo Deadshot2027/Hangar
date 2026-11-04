@@ -108,3 +108,54 @@ describe('discover', () => {
     expect(game.detection.label).toBe('Static site')
   })
 })
+
+describe('preview progress', () => {
+  it('reads stages, builds and the app starting out of the output', async () => {
+    const { emptyProgress, readProgress } = await import('../src/main/preview')
+    const p = emptyProgress()
+    expect(readProgress(p, '=== Building backend sidecar (this can take a few minutes) ===')).toBe(true)
+    expect(readProgress(p, '=== Building backend sidecar (this can take a few minutes) ===')).toBe(false)
+    expect(readProgress(p, '==> Installing frontend dependencies')).toBe(true)
+    expect(p.stages).toEqual(['Building backend sidecar (this can take a few minutes)', 'Installing frontend dependencies'])
+    readProgress(p, '   Compiling serde v1.0.210')
+    readProgress(p, '   Compiling tauri v2.1.0')
+    expect(p).toMatchObject({ building: true, compiled: 2 })
+    readProgress(p, '    Finished `dev` profile [unoptimized + debuginfo] target(s) in 41.20s')
+    expect(p.building).toBe(false)
+    readProgress(p, '     Running `target/debug/quantapp`')
+    expect(p.appStarted).toBe(true)
+    const q = emptyProgress()
+    readProgress(q, '[12/80] Compiling Hangar main.swift')
+    expect(q).toMatchObject({ building: true, compiled: 12, compiledTotal: 80 })
+    expect(readProgress(q, 'GET /api/health 200')).toBe(false)
+    expect(readProgress(q, '--- a/file.txt')).toBe(false)
+  })
+
+  it('waits until the page and the backends answer', async () => {
+    const dir = tempDir()
+    write(dir, { 'server.js': "console.log('Local: http://localhost:4400/'); setInterval(() => {}, 1000)\n" })
+    const events: PreviewEvent[] = []
+    let asked = 0
+    const ready = { everyMs: 50, backends: () => ['http://127.0.0.1:8000'], probe: async (url: string) => (url.includes('8000') ? ++asked > 3 : true) }
+    const pm = new PreviewManager((e) => events.push(e), undefined, ready)
+    pm.start(fakeProject(dir, 'node server.js'))
+    expect(pm.state('demo').progress.backends).toEqual([{ url: 'http://127.0.0.1:8000', up: false, auto: true }])
+    await expect.poll(() => pm.state('demo').progress.pageUp, { timeout: 5000 }).toBe(true)
+    await expect.poll(() => pm.state('demo').progress.backends[0].up, { timeout: 5000 }).toBe(true)
+    expect(events.some((e) => e.type === 'progress' && e.progress.backends[0]?.up)).toBe(true)
+    pm.stop('demo')
+  })
+
+  it('uses the backends set in Settings, and none for an empty list', () => {
+    const dir = tempDir()
+    write(dir, { 'app.js': 'setInterval(() => {}, 1000)\n' })
+    const ready = { everyMs: 10_000, backends: () => ['http://127.0.0.1:9999'], probe: async () => false }
+    const pm = new PreviewManager(() => undefined, undefined, ready)
+    const set = { ...fakeProject(dir, 'node app.js'), preview: { command: 'node app.js', kind: 'web' as const, waitFor: ['http://localhost:7000/health'] } }
+    expect(pm.start(set).progress.backends).toEqual([{ url: 'http://localhost:7000/health', up: false, auto: false }])
+    pm.stop('demo')
+    const none = { ...set, preview: { ...set.preview, waitFor: [] } }
+    expect(pm.start(none).progress.backends).toEqual([])
+    pm.stop('demo')
+  })
+})

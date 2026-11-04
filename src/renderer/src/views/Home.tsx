@@ -1,8 +1,10 @@
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Folder, Plus, X } from 'lucide-react'
 import type { FoundFolder, Status } from '@shared/types'
 import { api } from '../api'
+import { LogoHero } from '../components/brand'
 import { STATUS_LABEL, StatusIcon } from '../components/ui'
+import { useGlide } from '../motion'
 import { useApp } from '../state'
 import { cx, timeAgo } from '../util'
 
@@ -10,6 +12,8 @@ export function Home() {
   const { projects, loaded, statuses, go, openAdd, settings, saveSettings } = useApp()
   const [filter, setFilter] = useState<Status | 'all'>('all')
   const [found, setFound] = useState<FoundFolder[]>([])
+  const tabs = useRef<HTMLElement>(null)
+  useGlide(tabs, { selector: 'button.on', squash: false })
 
   useEffect(() => {
     let alive = true
@@ -32,8 +36,10 @@ export function Home() {
   if (loaded && projects.length === 0) {
     return (
       <div className="page" style={{ maxWidth: 640, margin: '0 auto', paddingTop: 80 }}>
-        <div className="empty" style={{ padding: '40px 24px' }}>
-          <h3 style={{ fontSize: 15 }}>Welcome to Hangar</h3>
+        <div className="welcome">
+          <LogoHero size={76} />
+          <h3>Welcome to Hangar</h3>
+          <p className="tagline">Every project, parked in one place.</p>
           <p>Add your projects from GitHub, from folders already on this Mac, or start a new one. Each gets notes, files, a live preview and its GitHub repo in one place.</p>
           <button type="button" className="btn pri tall" style={{ marginTop: 6 }} onClick={() => openAdd(found.length ? 'mac' : 'github')}>
             <Plus size={14} strokeWidth={2.2} /> Add your first project
@@ -46,7 +52,8 @@ export function Home() {
 
   return (
     <div className="page" style={{ paddingTop: 10, display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <nav className="tabs" aria-label="Filter by status">
+      <nav className="tabs" aria-label="Filter by status" ref={tabs}>
+        <span className="glide" aria-hidden="true" />
         {filters.map((k) => (
           <button key={k} type="button" className={cx(filter === k && 'on')} aria-current={filter === k ? 'page' : undefined} onClick={() => setFilter(k)}>
             {k === 'all' ? 'All' : k === 'idea' ? 'Ideas' : STATUS_LABEL[k]}
@@ -78,13 +85,13 @@ export function Home() {
           <span style={{ flex: '0 0 160px' }}>Repo</span>
           <span style={{ flex: '0 0 64px', textAlign: 'right' }}>Updated</span>
         </div>
-        <ul className="list">
-          {rows.map((p) => {
+        <ul className="list" key={filter}>
+          {rows.map((p, i) => {
             const st = statuses[p.id]
             const n = st?.changes.length ?? 0
             const repo = !p.codePath ? 'No code yet' : !p.codeExists ? 'Folder missing' : !p.isGit ? 'Not a git repo' : `${st?.branch || '…'}${n ? ` · ${n} changed` : ''}${p.remote ? '' : ' · local'}`
             return (
-              <li key={p.id}>
+              <li key={p.id} className="rise" style={{ '--i': Math.min(i, 12) } as React.CSSProperties}>
                 <button type="button" className="list-row" onClick={() => go({ kind: 'project', id: p.id, tab: 'overview' })}>
                   <StatusIcon status={p.status} />
                   <span className="ellipsis" style={{ flex: '0 0 150px', fontWeight: 500, color: 'var(--tx)' }}>{p.name}</span>

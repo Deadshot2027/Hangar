@@ -66,6 +66,26 @@ write(desk, {
   ].join('\n')
 })
 
+// A web app whose backend comes up a few seconds after its page: the loading screen waits for both.
+const slow = path.join(root, 'slow-api')
+write(slow, {
+  'package.json': JSON.stringify({ description: 'A page with a slow backend.', scripts: { dev: 'node dev.js' }, dependencies: { express: '4' } }),
+  'node_modules/.keep': '',
+  'src/api.js': "export const API = 'http://127.0.0.1:4611'\nexport const ping = () => fetch(API + '/health')\n",
+  'dev.js': [
+    "const http = require('http')",
+    "console.log('=== Building the backend (about five seconds) ===')",
+    'setTimeout(() => {',
+    "  http.createServer((q, r) => { r.setHeader('content-type', 'text/html'); r.end('<body style=\"margin:0;font:28px sans-serif;padding:40px\"><h1>Slow API app</h1></body>') }).listen(4610, () => console.log('  Local:   http://localhost:4610/'))",
+    '}, 800)',
+    'setTimeout(() => {',
+    "  console.log('=== Starting the API ===')",
+    "  http.createServer((q, r) => r.end('ok')).listen(4611, () => console.log('API listening'))",
+    '}, 6000)',
+    'setInterval(() => {}, 1000)'
+  ].join('\n')
+})
+
 // A site whose "GitHub" remote is really a local bare repo (url.insteadOf), so pushes can be checked.
 const bare = path.join(root, 'remote.git')
 const site = path.join(root, 'shop-site')
@@ -125,6 +145,7 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   await wait(800)
   await shot('01-welcome')
   check('welcome screen shows', await win.isVisible('text=Welcome to Hangar'))
+  check('logo in the sidebar and on the welcome screen', (await win.$$('.brand svg.logo')).length === 1 && (await win.$$('.welcome svg.logo-hero')).length === 1)
 
   await addByPath(tauri)
   await win.waitForSelector('.proj-head h1:has-text("Desk App")')
@@ -170,6 +191,30 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   const up = await app.evaluate(async () => fetch('http://localhost:3000/game.js').then((r) => r.status, String))
   check('game dev server answers', up === 200, String(up))
 
+  // The loading screen: it shows what it waits for, and goes once the page and its backend answer.
+  await addByPath(slow)
+  await win.click('.tabs button:has-text("Preview")')
+  try {
+    await win.waitForSelector('.boot .boot-step.now:has-text("Waiting for the backend")', { timeout: 20_000 })
+    await wait(600)
+    await shot('06-preview-loading')
+    const steps = await win.$$eval('.boot-step', (els) => els.map((e) => `${e.classList.contains('ok') ? '+' : '-'}${e.textContent}`))
+    check('loading screen shows its steps', steps.some((t) => t.startsWith('+Building the backend')) && steps.some((t) => t.includes('127.0.0.1:4611')), steps.join(' | '))
+    check('page waits behind the loading screen', (await win.$$('webview')).length === 1 && !(await win.$('.boot.done')))
+    await win.waitForSelector('.boot.done', { timeout: 20_000 })
+    await wait(700)
+    await shot('07-preview-ready')
+    check('loading screen goes once the backend answers', true)
+  } catch (e) {
+    await shot('06-preview-loading')
+    check('loading screen shows its steps', false, e.message.split('\n')[0])
+  }
+  {
+    const g = await win.$eval('.proj-head .tabs > .glide', (el) => ({ o: getComputedStyle(el).opacity, w: el.getBoundingClientRect().width }))
+    const on = await win.$eval('.proj-head .tabs button.on', (el) => el.getBoundingClientRect().width)
+    check('tab underline glides under the open tab', Number(g.o) > 0.9 && Math.abs(g.w - on) < 2, `${g.w} vs ${on}`)
+  }
+
   await win.click('.tabs button:has-text("Notes")')
   await wait(1500)
   const down = await app.evaluate(async () => fetch('http://localhost:3000/').then(() => 'still up', () => 'stopped'))
@@ -194,11 +239,11 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   } catch (e) {
     check('desktop app window shows live in the box', false, e.message.split('\n')[0])
   }
-  await shot('06-preview-desktop-window')
+  await shot('08-preview-desktop-window')
   await win.click('.frame-bar .seg button:has-text("Interface")')
   await win.waitForSelector('webview', { timeout: 30_000 })
   await wait(2000)
-  await shot('07-preview-desktop-interface')
+  await shot('09-preview-desktop-interface')
   check('desktop app interface shows in the box', ((await win.getAttribute('webview', 'src')) || '').includes('4567'))
   await win.click('.tabs button:has-text("Overview")')
   await wait(2500)
@@ -212,18 +257,56 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   await win.click('.seg button:has-text("Read")')
   await win.click('.notes-body input[type="checkbox"] >> nth=1')
   await wait(900)
-  await shot('08-notes')
+  await shot('10-notes')
   check('notes saved and task ticked', fs.readFileSync(path.join(vault, 'arena-io', 'notes.md'), 'utf8').includes('- [x] Rooms'))
 
   await win.click('.side button:has-text("All projects")')
   await wait(800)
-  await shot('09-home')
-  check('home lists 4 projects', (await win.$$('.list .list-row')).length === 4)
+  await shot('11-home')
+  check('home lists 5 projects', (await win.$$('.list .list-row')).length === 5)
+  check('no preview left marked live after leaving them', (await win.$$('.side [aria-label="Preview live"]')).length === 0)
   check('GitHub shown as not signed in', await win.isVisible('text=GitHub CLI not signed in'))
   await win.keyboard.press(process.platform === 'darwin' ? 'Meta+k' : 'Control+k')
   await win.waitForSelector('.palette')
   await win.keyboard.type('are')
-  await shot('10-palette')
+  await wait(500)
+  await shot('12-palette')
+  // The first Escape clears the search, the second closes it.
+  await win.keyboard.press('Escape')
+  await win.keyboard.press('Escape')
+  await win.waitForSelector('.palette', { state: 'detached', timeout: 3000 })
+
+  // Open in: the menu grows out of its button, and its highlight follows the pointer.
+  await win.click('.side button:has-text("Shop Site")')
+  await win.click('.topbar button:has-text("Open in")')
+  await wait(700)
+  await win.hover('.menu-item:has-text("Terminal")')
+  await wait(500)
+  await shot('13-open-in')
+  {
+    const body = await win.$eval('.menu .grow-body', (el) => Number(getComputedStyle(el).opacity))
+    const bg = await win.$eval('.menu .grow-bg', (el) => el.getBoundingClientRect().height)
+    const menu = await win.$eval('.menu', (el) => el.getBoundingClientRect().height)
+    const hi = await win.$eval('.menu-items > .glide', (el) => [Number(getComputedStyle(el).opacity), el.getBoundingClientRect().top])
+    const term = await win.$eval('.menu-item:has-text("Terminal")', (el) => el.getBoundingClientRect().top)
+    check('Open in menu grows out of its button', body > 0.99 && Math.abs(bg - menu) < 1.5, `${bg} vs ${menu}`)
+    check('menu highlight follows the pointer', hi[0] > 0.9 && Math.abs(hi[1] - term) < 1.5)
+  }
+  await win.keyboard.press('Escape')
+  await win.waitForSelector('.menu', { state: 'detached', timeout: 3000 })
+  check('menu shrinks back and goes', true)
+
+  // Dark with the violet accent: the same glass and mark.
+  await win.evaluate(() => {
+    document.documentElement.classList.remove('t-light', 'a-mono')
+    document.documentElement.classList.add('t-dark', 'a-violet')
+  })
+  await win.click('.topbar button:has-text("Open in")')
+  await wait(700)
+  await win.hover('.menu-item:has-text("VS Code")')
+  await wait(500)
+  await shot('14-dark-violet')
+  await win.keyboard.press('Escape')
 
   check('no renderer errors', errors.length === 0, errors.slice(0, 3).join(' | '))
   await app.close()

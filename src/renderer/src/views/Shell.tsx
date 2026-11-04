@@ -1,18 +1,24 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState, type ReactNode } from 'react'
 import { Asterisk, ChevronDown, Code2, ExternalLink, Folder, LayoutGrid, Play, Plus, Search, SlidersHorizontal, SquareArrowOutUpRight, Terminal } from 'lucide-react'
 import type { OpenTarget, Project } from '@shared/types'
 import { api, errMsg } from '../api'
+import { Grow, MorphLabel, useMorph } from '../components/liquid'
+import { Logo } from '../components/brand'
 import { StatusIcon, useDismiss, useToast } from '../components/ui'
+import { useGlide } from '../motion'
 import { useApp } from '../state'
 import { cx, plural } from '../util'
 
 export function Sidebar() {
   const { projects, route, go, openAdd, openSettings, statuses, live, env } = useApp()
   const isHome = route.kind === 'home'
+  const nav = useRef<HTMLElement>(null)
+  useGlide(nav, { selector: '.nav-item.on', axis: 'y' })
   return (
-    <nav className="side" aria-label="Sidebar">
+    <nav className="side" aria-label="Sidebar" ref={nav}>
+      <span className="glide" aria-hidden="true" />
       <div className="brand">
-        <span className="brand-mark" aria-hidden="true">H</span>
+        <Logo size={24} />
         <span className="brand-name">Hangar</span>
       </div>
       <button type="button" className={cx('nav-item', isHome && 'on')} aria-current={isHome ? 'page' : undefined} onClick={() => go({ kind: 'home' })}>
@@ -72,6 +78,7 @@ export function OpenInMenu({ project }: { project: Project }) {
   const [open, setOpen] = useState(false)
   const close = useCallback(() => setOpen(false), [])
   const ref = useDismiss<HTMLDivElement>(open, close)
+  const button = useRef<HTMLButtonElement>(null)
   const run = async (target: OpenTarget) => {
     setOpen(false)
     try {
@@ -83,30 +90,45 @@ export function OpenInMenu({ project }: { project: Project }) {
   }
   return (
     <div className="menu-wrap" ref={ref}>
-      <button type="button" className="btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
-        Open in <ChevronDown size={12} className="muted" />
+      <button ref={button} type="button" className="btn" aria-haspopup="menu" aria-expanded={open} onClick={() => setOpen((o) => !o)}>
+        Open in <ChevronDown size={12} className="muted chev" style={{ transform: open ? 'rotate(180deg)' : 'none' }} />
       </button>
-      {open && (
-        <div className="menu" role="menu" aria-label="Open in">
+      <Grow open={open} anchor={button} className="menu" role="menu" label="Open in">
+        <MenuItems>
           {OPEN_ITEMS.map(({ target, label, icon: Icon }) => (
             <button key={target} type="button" role="menuitem" className="menu-item" disabled={target === 'github' && !project.remote} onClick={() => run(target)}>
               <Icon size={14} />
               <span>{label(settings.editor)}</span>
             </button>
           ))}
-        </div>
-      )}
+        </MenuItems>
+      </Grow>
     </div>
   )
 }
 
-/** Opens the real, finished thing: the installed app, the live site, or a command. */
+/** A menu's items, with a highlight that glides after the pointer. */
+export function MenuItems({ children }: { children: ReactNode }) {
+  const ref = useRef<HTMLDivElement>(null)
+  useGlide(ref, { selector: '.menu-item', axis: 'y', hover: true })
+  return (
+    <div className="menu-items" ref={ref}>
+      <span className="glide" aria-hidden="true" />
+      {children}
+    </div>
+  )
+}
+
+/** Opens the real, finished thing: the installed app, the live site, or a command. Its label melts into dots while it works. */
 export function LaunchButton({ project }: { project: Project }) {
   const { go } = useApp()
   const toast = useToast()
+  const { morph, run } = useMorph()
   const launch = async () => {
+    if (morph === 'busy') return
     try {
-      const r = await api.launch(project.id)
+      const r = await run(() => api.launch(project.id), (x) => x.ok)
+      if (!r) return
       toast(r.message, r.ok)
       if (!r.ok && project.launch.kind === 'none') go({ kind: 'project', id: project.id, tab: 'settings' })
     } catch (e) {
@@ -114,9 +136,11 @@ export function LaunchButton({ project }: { project: Project }) {
     }
   }
   return (
-    <button type="button" className="btn pri" onClick={launch} title={project.launch.kind === 'none' ? 'Choose what Launch opens' : 'Launch  ⌘L'}>
-      <SquareArrowOutUpRight size={12} strokeWidth={2.2} />
-      Launch
+    <button type="button" className="btn pri mo-btn" data-morph={morph} aria-busy={morph === 'busy'} onClick={launch} title={project.launch.kind === 'none' ? 'Choose what Launch opens' : 'Launch  ⌘L'}>
+      <MorphLabel morph={morph}>
+        <SquareArrowOutUpRight size={12} strokeWidth={2.2} />
+        Launch
+      </MorphLabel>
     </button>
   )
 }

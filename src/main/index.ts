@@ -5,7 +5,7 @@ import { app, BrowserWindow, desktopCapturer, dialog, globalShortcut, ipcMain, n
 import { dockWindow, windowNumber, windowOwners } from './appwindows'
 import type { HangarApi, InvokeMethod, Settings } from '@shared/types'
 import { discover, defaultRoots } from './discover'
-import { detect } from './detect'
+import { detect, detectBackends } from './detect'
 import { loadLoginShellPath, which } from './exec'
 import * as git from './git'
 import * as github from './github'
@@ -13,6 +13,8 @@ import { launch, openIn } from './open'
 import { PreviewManager } from './preview'
 import { loadSettings, saveSettings } from './settings'
 import * as vault from './vault'
+
+import appIcon from '../../resources/icon.png?asset'
 
 const isMac = process.platform === 'darwin'
 if (process.env.HANGAR_USER_DATA) app.setPath('userData', process.env.HANGAR_USER_DATA)
@@ -32,6 +34,8 @@ const sendAll = (channel: string, payload?: unknown) => {
   for (const w of [mainWin, launcherWin]) if (w && !w.isDestroyed()) w.webContents.send(channel, payload)
 }
 const preview = new PreviewManager((e) => sendAll('preview:event', e))
+/** How many times each preview was asked to stop: a start that began before the latest stop is dropped. */
+const previewStops = new Map<string, number>()
 
 // Windows that were already open when a preview started (to tell its new ones apart where
 // macOS's window owners are not available), and previews whose window has been put behind Hangar.
@@ -112,6 +116,10 @@ const handlers: Handlers = {
   },
   githubRepos: async () => github.listRepos(),
   detect: async (path) => detect(path),
+  detectBackends: async (id) => {
+    const p = await project(id)
+    return p.codePath && p.codeExists && p.preview.kind !== 'console' ? detectBackends(p.codePath, p.preview.url || null) : []
+  },
   async pickFolder() {
     const r = await dialog.showOpenDialog(mainWin!, { properties: ['openDirectory'] })
     return r.canceled ? null : r.filePaths[0] ?? null
@@ -219,18 +227,26 @@ const handlers: Handlers = {
   },
 
   async previewStart(id, view) {
+    // Starting waits a moment (reading the project, listing windows); a stop in that moment wins.
+    const ticket = previewStops.get(id) || 0
     const p = await project(id)
     if (preview.state(id).status === 'idle') await rememberWindows(id)
+    if ((previewStops.get(id) || 0) !== ticket) return preview.state(id)
     return preview.start(p, view)
   },
   async previewStop(id) {
+    previewStops.set(id, (previewStops.get(id) || 0) + 1)
     preview.stop(id)
   },
   async previewRestart(id, view) {
+    previewStops.set(id, (previewStops.get(id) || 0) + 1)
+    const ticket = previewStops.get(id)
     preview.stop(id)
     await new Promise((r) => setTimeout(r, 400))
     await rememberWindows(id)
-    return preview.start(await project(id), view)
+    const p = await project(id)
+    if (previewStops.get(id) !== ticket) return preview.state(id)
+    return preview.start(p, view)
   },
   previewSetView: async (id, view) => preview.setView(id, view),
   async previewWindows(id) {
@@ -304,6 +320,7 @@ function createMain() {
     show: false,
     title: 'Hangar',
     backgroundColor: '#0b0c10',
+    icon: appIcon,
     titleBarStyle: isMac ? 'hiddenInset' : 'default',
     trafficLightPosition: { x: 16, y: 16 },
     webPreferences: webPreferences()
@@ -400,6 +417,8 @@ if (!app.requestSingleInstanceLock()) {
 
   harden()
   app.whenReady().then(async () => {
+    // A packaged app has its icon from the bundle; while developing, Electron's own would show in the Dock.
+    if (isMac && !app.isPackaged) app.dock?.setIcon(appIcon)
     await loadLoginShellPath()
     protocol.handle('asset', (req) => {
       const abs = resolve(decodeURIComponent(new URL(req.url).pathname))

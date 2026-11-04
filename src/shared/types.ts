@@ -27,7 +27,8 @@ export interface HangarFile {
   /** Where the code is: "repo" (inside the project folder) or an absolute path (a linked folder). Null when there is no code yet. */
   code: string | null
   /** `view` is how a desktop app shows in the box: its web interface, or a live picture of its window. */
-  preview: { command: string; kind: PreviewKind; url?: string; view?: DesktopView }
+  /** waitFor: backends the preview waits for before it shows (unset: Hangar looks for them in the code; [] waits for none). */
+  preview: { command: string; kind: PreviewKind; url?: string; view?: DesktopView; waitFor?: string[] }
   launch: { kind: LaunchKind; target: string }
   createdAt: string
 }
@@ -142,6 +143,25 @@ export interface Settings {
 
 export type PreviewStatus = 'idle' | 'installing' | 'starting' | 'running' | 'exited'
 
+/** How far a preview has got, read from its output and by asking its addresses. */
+export interface PreviewProgress {
+  /** packages were installed first */
+  install: boolean
+  /** Stages a launch script announced (=== Building backend sidecar ===), oldest first. */
+  stages: string[]
+  /** Something is compiling (cargo, swift, xcodebuild). */
+  building: boolean
+  /** Units compiled so far, and the total when the tool says ([12/80]). */
+  compiled: number
+  compiledTotal: number | null
+  /** The app itself is running (cargo's Running `target/...`, electron-vite's start electron app). */
+  appStarted: boolean
+  /** The page answers. */
+  pageUp: boolean
+  /** Backends the page needs; auto: found in the code rather than set in Settings. */
+  backends: { url: string; up: boolean; auto: boolean }[]
+}
+
 export interface PreviewState {
   id: string
   status: PreviewStatus
@@ -150,12 +170,14 @@ export interface PreviewState {
   logs: string[]
   exitCode: number | null
   startedAt: string | null
+  progress: PreviewProgress
 }
 
 export type PreviewEvent =
   | { id: string; type: 'log'; line: string }
   | { id: string; type: 'url'; url: string }
   | { id: string; type: 'status'; status: PreviewStatus; exitCode?: number | null }
+  | { id: string; type: 'progress'; progress: PreviewProgress }
 
 export interface ActionResult {
   ok: boolean
@@ -186,6 +208,8 @@ export interface HangarApi {
   discover(): Promise<FoundFolder[]>
   githubRepos(): Promise<GhRepo[]>
   detect(path: string): Promise<Detection>
+  /** The backend addresses Hangar finds in a project's code (what an unset waitFor waits for). */
+  detectBackends(id: string): Promise<string[]>
   pickFolder(): Promise<string | null>
   pickFiles(): Promise<string[]>
 
@@ -246,7 +270,7 @@ export interface HangarApi {
 /** IPC channel names: every HangarApi method that is a plain request/response. */
 export const INVOKE_METHODS = [
   'env', 'settings', 'saveSettings',
-  'listProjects', 'updateProject', 'removeProject', 'createProject', 'linkFolder', 'cloneRepo', 'discover', 'githubRepos', 'detect', 'pickFolder', 'pickFiles',
+  'listProjects', 'updateProject', 'removeProject', 'createProject', 'linkFolder', 'cloneRepo', 'discover', 'githubRepos', 'detect', 'detectBackends', 'pickFolder', 'pickFiles',
   'readNotes', 'writeNotes',
   'listFiles', 'uploadFiles', 'deletePath', 'listAssets', 'addAssets',
   'gitStatus', 'gitLog', 'branches', 'checkout', 'pull', 'commitPush',
