@@ -21,6 +21,8 @@ npm run dev
 
 `npm run dist` builds `Hangar.dmg` in `dist/`.
 
+If Electron's download was skipped during install (for example with `ignore-scripts`, pnpm or bun), `npm run dev` fetches it on the first run. To fetch it by hand: `node node_modules/electron/install.js`.
+
 ## How it stores things
 
 Everything is plain files. Nothing is locked inside the app.
