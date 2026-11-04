@@ -9,6 +9,7 @@ import { Overview } from './Overview'
 import { Preview } from './Preview'
 import { ProjectSettings } from './ProjectSettings'
 import { Repository } from './Repository'
+import { LaunchButton } from './Shell'
 
 const TABS: { key: Tab; label: string }[] = [
   { key: 'overview', label: 'Overview' },
@@ -44,6 +45,8 @@ export function ProjectPage({ project, tab }: { project: Project; tab: Tab }) {
             {STATUS_LABEL[project.status]}
           </button>
           {!project.codeExists && project.codePath && <span className="chip" style={{ color: 'var(--warn)' }}>Code folder missing</span>}
+          <span className="grow" />
+          <LaunchButton project={project} />
         </div>
         {project.description && <p>{project.description}</p>}
         <nav className="tabs" aria-label="Project sections" style={{ marginTop: 14 }}>

@@ -100,11 +100,11 @@ export function OpenInMenu({ project }: { project: Project }) {
   )
 }
 
-export function TopBar({ project }: { project?: Project }) {
-  const { go, openAdd, openPalette } = useApp()
+/** Opens the real, finished thing: the installed app, the live site, or a command. */
+export function LaunchButton({ project }: { project: Project }) {
+  const { go } = useApp()
   const toast = useToast()
   const launch = async () => {
-    if (!project) return
     try {
       const r = await api.launch(project.id)
       toast(r.message, r.ok)
@@ -113,6 +113,16 @@ export function TopBar({ project }: { project?: Project }) {
       toast(errMsg(e), false)
     }
   }
+  return (
+    <button type="button" className="btn pri" onClick={launch} title={project.launch.kind === 'none' ? 'Choose what Launch opens' : 'Launch  ⌘L'}>
+      <SquareArrowOutUpRight size={12} strokeWidth={2.2} />
+      Launch
+    </button>
+  )
+}
+
+export function TopBar({ project }: { project?: Project }) {
+  const { go, openAdd, openPalette } = useApp()
   return (
     <header className="topbar">
       <div className="crumb">
@@ -130,13 +140,7 @@ export function TopBar({ project }: { project?: Project }) {
       </div>
       <div className="row">
         {project ? (
-          <>
-            <button type="button" className="btn pri" onClick={launch} title={project.launch.kind === 'none' ? 'Choose what Launch opens' : 'Launch  ⌘L'}>
-              <SquareArrowOutUpRight size={12} strokeWidth={2.2} />
-              Launch
-            </button>
-            <OpenInMenu project={project} />
-          </>
+          <OpenInMenu project={project} />
         ) : (
           <button type="button" className="btn pri" onClick={() => openAdd()}>
             <Plus size={14} strokeWidth={2.2} />

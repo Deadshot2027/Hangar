@@ -16,6 +16,8 @@ export default defineConfig({
   renderer: {
     resolve: { alias: shared },
     plugins: [react()],
+    // Not Vite's usual 5173: the projects Hangar previews use that one (QuantApp insists on it).
+    server: { port: 5190 },
     build: {
       rollupOptions: {
         input: {

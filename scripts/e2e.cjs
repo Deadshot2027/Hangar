@@ -131,6 +131,12 @@ const wait = (ms) => new Promise((r) => setTimeout(r, ms))
   await wait(800)
   await shot('02-desktop-app-overview')
   check('Tauri app detected with ./run.sh', /\.\/run\.sh/.test((await win.textContent('.kv:has-text("Preview")')) || ''))
+  {
+    const title = await win.locator('.proj-head h1').boundingBox()
+    const launchBtn = await win.locator('.proj-head button:has-text("Launch")').boundingBox()
+    const inTopbar = await win.locator('.topbar button:has-text("Launch")').count()
+    check('Launch sits on the right of the project title', !!title && !!launchBtn && !inTopbar && launchBtn.x > title.x + 400 && Math.abs(launchBtn.y + launchBtn.height / 2 - (title.y + title.height / 2)) < 6)
+  }
 
   await addByPath(site)
   await win.click('.tabs button:has-text("Repository")')
